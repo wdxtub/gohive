@@ -183,7 +183,9 @@ func (r *rowSet) Next() bool {
 		r.rowSet = resp.Results
 		r.hasMore = *resp.HasMoreRows
 	}
-
+	if r.offset>=len(r.rowSet.Rows){
+		return false
+	}
 	row := r.rowSet.Rows[r.offset]
 	r.nextRow = make([]interface{}, len(r.Columns()))
 

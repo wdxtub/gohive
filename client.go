@@ -261,6 +261,7 @@ func (c *TSaslClientTransport) Query(query string) (RowSet, error) {
 	executeReq := tcliservice.NewTExecuteStatementReq()
 	executeReq.SessionHandle = c.Session
 	executeReq.Statement = query
+	executeReq.RunAsync = true
 
 	resp, err := c.Client.ExecuteStatement(executeReq)
 	if err != nil {
