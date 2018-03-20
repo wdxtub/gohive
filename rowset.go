@@ -2,14 +2,19 @@ package gohive
 
 /*
 rowset.go comes from github.com/derekgr/hivething, tiny changes
- */
+*/
 import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 
+	"reflect"
+
 	"git.apache.org/thrift.git/lib/go/thrift"
+	"github.com/eaciit/toolkit"
 	"github.com/lwldcr/gohive/tcliservice"
 )
 
@@ -23,8 +28,7 @@ var (
 	DefaultOptions = Options{PollIntervalSeconds: 5, BatchSize: 10000}
 )
 
-
-type rowSet struct {
+type RowSetR struct {
 	thrift    *tcliservice.TCLIServiceClient
 	operation *tcliservice.TOperationHandle
 	options   Options
@@ -63,7 +67,7 @@ type Status struct {
 }
 
 func newRowSet(thrift *tcliservice.TCLIServiceClient, operation *tcliservice.TOperationHandle, options Options) RowSet {
-	return &rowSet{thrift, operation, options, nil, nil, 0, nil, true, false, nil}
+	return &RowSetR{thrift, operation, options, nil, nil, 0, nil, true, false, nil}
 }
 
 // Construct a RowSet for a previously submitted operation, using the prior operation's Handle()
@@ -78,7 +82,7 @@ func Reattach(conn *TSaslClientTransport, handle []byte) (RowSet, error) {
 }
 
 // Issue a thrift call to check for the job's current status.
-func (r *rowSet) Poll() (*Status, error) {
+func (r *RowSetR) Poll() (*Status, error) {
 	req := tcliservice.NewTGetOperationStatusReq()
 	req.OperationHandle = r.operation
 
@@ -99,7 +103,7 @@ func (r *rowSet) Poll() (*Status, error) {
 }
 
 // Wait until the job is complete, one way or another, returning Status and error.
-func (r *rowSet) Wait() (*Status, error) {
+func (r *RowSetR) Wait() (*Status, error) {
 	for {
 		status, err := r.Poll()
 
@@ -134,7 +138,7 @@ func (r *rowSet) Wait() (*Status, error) {
 	}
 }
 
-func (r *rowSet) waitForSuccess() error {
+func (r *RowSetR) waitForSuccess() error {
 	if !r.ready {
 		status, err := r.Wait()
 		if err != nil {
@@ -153,7 +157,7 @@ func (r *rowSet) waitForSuccess() error {
 // complete, if necessary.
 // Returns true is a row is available to Scan(), and false if the
 // results are empty or any other error occurs.
-func (r *rowSet) Next() bool {
+func (r *RowSetR) Next() bool {
 	if err := r.waitForSuccess(); err != nil {
 		return false
 	}
@@ -183,7 +187,7 @@ func (r *rowSet) Next() bool {
 		r.rowSet = resp.Results
 		r.hasMore = *resp.HasMoreRows
 	}
-	if r.offset>=len(r.rowSet.Rows){
+	if r.offset >= len(r.rowSet.Rows) {
 		return false
 	}
 	row := r.rowSet.Rows[r.offset]
@@ -205,7 +209,7 @@ func (r *rowSet) Next() bool {
 // 	- string, []byte
 // 	- float64
 //	 - bool
-func (r *rowSet) Scan(dest ...interface{}) error {
+func (r *RowSetR) Scan(dest ...interface{}) error {
 	// TODO: Add type checking and conversion between compatible
 	// types where possible, as well as some common error checking,
 	// like passing nil. database/sql's method is very convenient,
@@ -242,6 +246,8 @@ func (r *rowSet) Scan(dest ...interface{}) error {
 			*dt = val.(float64)
 		case *bool:
 			*dt = val.(bool)
+		case *interface{}:
+			*dt = val
 		default:
 			return fmt.Errorf("Can't scan value of type %T with value %v", dt, val)
 		}
@@ -249,10 +255,106 @@ func (r *rowSet) Scan(dest ...interface{}) error {
 
 	return nil
 }
+func (r *RowSetR) ScanObject(m interface{}) error {
+	if r.nextRow == nil {
+		return errors.New("No row to scan! Did you call Next() first?")
+	}
+
+	var valueType reflect.Type
+	valueType = reflect.TypeOf(m).Elem()
+	dataTypeList := toolkit.M{}
+
+	if valueType.Kind() == reflect.Struct {
+		for i := 0; i < valueType.NumField(); i++ {
+			namaField := strings.ToLower(valueType.Field(i).Name)
+			dataType := valueType.Field(i).Type.String()
+			dataTypeList.Set(namaField, dataType)
+		}
+	}
+	columns := r.Columns()
+	for i, _ := range columns {
+		yy := strings.Split(columns[i], ".")
+		if len(yy) == 2 {
+			columns[i] = yy[1]
+		}
+	}
+	count := len(columns)
+	values := make([]interface{}, count)
+	valuePtrs := make([]interface{}, count)
+	for i := 0; i < count; i++ {
+		valuePtrs[i] = &values[i]
+	}
+	r.Scan(valuePtrs...)
+	//fmt.Println(columns)
+	//fmt.Println(values)
+	entry := toolkit.M{}
+	for i, col := range columns {
+		var v interface{}
+		val := values[i]
+		var ok bool
+		var b []byte
+		if val == nil {
+			v = nil
+		} else {
+			b, ok = val.([]byte)
+			if ok {
+				v = string(b)
+			} else {
+				v = val
+			}
+		}
+		v = structValue(dataTypeList, col, v)
+		if v != nil {
+			entry.Set(strings.ToLower(col), v)
+		}
+	}
+	toolkit.Serde(entry, m, "json")
+	return nil
+}
+func structValue(dataTypeList toolkit.M, col string, v interface{}) interface{} {
+	for fieldname, datatype := range dataTypeList {
+		if strings.ToLower(col) == fieldname {
+			switch datatype.(string) {
+			case "time.Time":
+				val, e := time.Parse(time.RFC3339, toolkit.ToString(v))
+				if e != nil {
+					v = toolkit.ToString(v)
+				} else {
+					v = val
+				}
+			case "int", "int32", "int64":
+				val, e := strconv.Atoi(toolkit.ToString(v))
+				if e != nil {
+					v = toolkit.ToString(v)
+				} else {
+					v = val
+				}
+			case "float", "float32", "float64":
+				val, e := strconv.ParseFloat(toolkit.ToString(v), 64)
+				if e != nil {
+					v = toolkit.ToString(v)
+				} else {
+					v = val
+				}
+			case "bool":
+				val, e := strconv.ParseBool(toolkit.ToString(v))
+				if e != nil {
+					v = toolkit.ToString(v)
+				} else {
+					v = val
+				}
+			default:
+				v = toolkit.ToString(v)
+			}
+
+		}
+	}
+	return v
+}
 
 // Returns the names of the columns for the given operation,
 // blocking if necessary until the information is available.
-func (r *rowSet) Columns() []string {
+func (r *RowSetR) Columns() []string {
 	if r.columnStrs == nil {
 		if err := r.waitForSuccess(); err != nil {
 			return nil
@@ -272,7 +374,7 @@ func (r *rowSet) Columns() []string {
 // Return a serialized representation of an identifier that can later
 // be used to reattach to a running operation. This identifier and
 // serialized representation should be considered opaque by users.
-func (r *rowSet) Handle() ([]byte, error) {
+func (r *RowSetR) Handle() ([]byte, error) {
 	return serializeOp(r.operation)
 }
 
@@ -364,7 +466,7 @@ func serializeOp(operation *tcliservice.TOperationHandle) ([]byte, error) {
 }
 
 // Close do close operation
-func (r *rowSet) Close() error {
+func (r *RowSetR) Close() error {
 	closeOperationReq := tcliservice.NewTCloseOperationReq()
 	closeOperationReq.OperationHandle = r.operation
 
