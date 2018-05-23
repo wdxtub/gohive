@@ -192,15 +192,26 @@ func (r *RowSetR) Next() bool {
 		return false
 	}
 
+	for {
+		row := r.rowSet.Rows[r.offset]
+		r.nextRow = make([]interface{}, len(r.Columns()))
+		fmt.Println("Rows:", len(r.rowSet.Rows))
+		fmt.Println("Offset:", r.offset)
 
-	row := r.rowSet.Rows[r.offset]
-	r.nextRow = make([]interface{}, len(r.Columns()))
+		if err := convertRow(row, r.nextRow); err != nil {
+			fmt.Println(fmt.Sprintf("Error converting row: %v", err))
+			if r.offset >= len(r.rowSet.Rows) - 1 {
+				return false
+			}
+			r.offset++
+			continue
+		}
 
-	if err := convertRow(row, r.nextRow); err != nil {
-		log.Printf("Error converting row: %v", err)
-		return false
+		break
 	}
-	r.offset++
+
+
+
 
 	return true
 }
