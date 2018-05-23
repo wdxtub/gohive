@@ -53,6 +53,7 @@ type RowSet interface {
 	Columns() []string
 	Next() bool
 	Scan(dest ...interface{}) error
+	ScanObject(dest interface{}) error
 	Poll() (*Status, error)
 	Wait() (*Status, error)
 	Close() error
