@@ -184,7 +184,7 @@ func (r *RowSetR) Next() bool {
 			return false
 		}
 
-		r.offset = 1
+		r.offset = 0
 		r.rowSet = resp.Results
 		r.hasMore = *resp.HasMoreRows
 	}
@@ -192,10 +192,6 @@ func (r *RowSetR) Next() bool {
 		return false
 	}
 
-	// 跳过第一行的列名数据
-	if r.offset == 0 {
-		r.offset = 1
-	}
 
 	row := r.rowSet.Rows[r.offset]
 	r.nextRow = make([]interface{}, len(r.Columns()))
