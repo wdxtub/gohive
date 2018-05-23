@@ -206,7 +206,7 @@ func (r *RowSetR) Next() bool {
 			r.offset++
 			continue
 		}
-
+		r.offset++
 		break
 	}
 
