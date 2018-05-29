@@ -195,8 +195,6 @@ func (r *RowSetR) Next() bool {
 	for {
 		row := r.rowSet.Rows[r.offset]
 		r.nextRow = make([]interface{}, len(r.Columns()))
-		fmt.Println("Rows:", len(r.rowSet.Rows))
-		fmt.Println("Offset:", r.offset)
 
 		if err := convertRow(row, r.nextRow); err != nil {
 			fmt.Println(fmt.Sprintf("Error converting row: %v", err))
